@@ -4,7 +4,7 @@
 #	.type	_start,@function
 _start:
 # stack pointer setting
-	mov.l	#0xffff00,sp
+	mov.l	#_stack,sp
 	jsr	@_main
 
 1:
