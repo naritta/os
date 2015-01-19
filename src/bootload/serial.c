@@ -32,10 +32,10 @@ struct h8_3069f_sci {
 #define H8_3069F_SCI_SCR_CKE1   (1<<1)
 #define H8_3069F_SCI_SCR_TEIE   (1<<2)
 #define H8_3069F_SCI_SCR_MPIE   (1<<3)
-#define H8_3069F_SCI_SCR_RE     (1<<4) /* ¼õ¿®Í­¸ú */
-#define H8_3069F_SCI_SCR_TE     (1<<5) /* Á÷¿®Í­¸ú */
-#define H8_3069F_SCI_SCR_RIE    (1<<6) /* ¼õ¿®³ä¹þ¤ßÍ­¸ú */
-#define H8_3069F_SCI_SCR_TIE    (1<<7) /* Á÷¿®³ä¹þ¤ßÍ­¸ú */
+#define H8_3069F_SCI_SCR_RE     (1<<4) /* 受信有効 */
+#define H8_3069F_SCI_SCR_TE     (1<<5) /* 送信有効 */
+#define H8_3069F_SCI_SCR_RIE    (1<<6) /* 受信割込み有効 */
+#define H8_3069F_SCI_SCR_TIE    (1<<7) /* 送信割込み有効 */
 
 #define H8_3069F_SCI_SSR_MPBT   (1<<0)
 #define H8_3069F_SCI_SSR_MPB    (1<<1)
@@ -43,8 +43,8 @@ struct h8_3069f_sci {
 #define H8_3069F_SCI_SSR_PER    (1<<3)
 #define H8_3069F_SCI_SSR_FERERS (1<<4)
 #define H8_3069F_SCI_SSR_ORER   (1<<5)
-#define H8_3069F_SCI_SSR_RDRF   (1<<6) /* ¼õ¿®´°Î» */
-#define H8_3069F_SCI_SSR_TDRE   (1<<7) /* Á÷¿®´°Î» */
+#define H8_3069F_SCI_SSR_RDRF   (1<<6) /* 受信完了 */
+#define H8_3069F_SCI_SSR_TDRE   (1<<7) /* 送信完了 */
 
 static struct {
   volatile struct h8_3069f_sci *sci;
@@ -54,37 +54,59 @@ static struct {
   { H8_3069F_SCI2 }, 
 };
 
-/* ¥Ç¥Ð¥¤¥¹½é´ü²½ */
+/* デバイス初期化 */
 int serial_init(int index)
 {
   volatile struct h8_3069f_sci *sci = regs[index].sci;
 
   sci->scr = 0;
   sci->smr = 0;
-  sci->brr = 64; /* 20MHz¤Î¥¯¥í¥Ã¥¯¤«¤é9600bps¤òÀ¸À®(25MHz¤Î¾ì¹ç¤Ï80¤Ë¤¹¤ë) */
-  sci->scr = H8_3069F_SCI_SCR_RE | H8_3069F_SCI_SCR_TE; /* Á÷¼õ¿®²ÄÇ½ */
+  sci->brr = 64; /* 20MHzのクロックから9600bpsを生成(25MHzの場合は80にする) */
+  sci->scr = H8_3069F_SCI_SCR_RE | H8_3069F_SCI_SCR_TE; /* 送受信可能 */
   sci->ssr = 0;
 
   return 0;
 }
 
-/* Á÷¿®²ÄÇ½¤«¡© */
+/* 送信可能か？ */
 int serial_is_send_enable(int index)
 {
   volatile struct h8_3069f_sci *sci = regs[index].sci;
   return (sci->ssr & H8_3069F_SCI_SSR_TDRE);
 }
 
-/* £±Ê¸»úÁ÷¿® */
+/* １文字送信 */
 int serial_send_byte(int index, unsigned char c)
 {
   volatile struct h8_3069f_sci *sci = regs[index].sci;
 
-  /* Á÷¿®²ÄÇ½¤Ë¤Ê¤ë¤Þ¤ÇÂÔ¤Ä */
+  /* 送信可能になるまで待つ */
   while (!serial_is_send_enable(index))
     ;
   sci->tdr = c;
-  sci->ssr &= ~H8_3069F_SCI_SSR_TDRE; /* Á÷¿®³«»Ï */
+  sci->ssr &= ~H8_3069F_SCI_SSR_TDRE; /* 送信開始 */
 
   return 0;
+}
+
+/* 受信可能か？ */
+int serial_is_recv_enable(int index)
+{
+  volatile struct h8_3069f_sci *sci = regs[index].sci;
+  return (sci->ssr & H8_3069F_SCI_SSR_RDRF);
+}
+
+/* １文字受信 */
+unsigned char serial_recv_byte(int index)
+{
+  volatile struct h8_3069f_sci *sci = regs[index].sci;
+  unsigned char c;
+
+  /* 受信文字が来るまで待つ */
+  while (!serial_is_recv_enable(index))
+    ;
+  c = sci->rdr;
+  sci->ssr &= ~H8_3069F_SCI_SSR_RDRF; /* 受信完了 */
+
+  return c;
 }

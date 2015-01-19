@@ -72,20 +72,46 @@ int strncmp(const char *s1, const char *s2, int len)
   return 0;
 }
 
-// send one letter
-int putc(unsigned char c){
+/* １文字送信 */
+int putc(unsigned char c)
+{
   if (c == '\n')
     serial_send_byte(SERIAL_DEFAULT_DEVICE, '\r');
   return serial_send_byte(SERIAL_DEFAULT_DEVICE, c);
 }
 
-// send string
-int puts(unsigned char *str){
+/* １文字受信 */
+unsigned char getc(void)
+{
+  unsigned char c = serial_recv_byte(SERIAL_DEFAULT_DEVICE);
+  c = (c == '\r') ? '\n' : c;
+  putc(c); /* エコー・バック */
+  return c;
+}
+
+/* 文字列送信 */
+int puts(unsigned char *str)
+{
   while (*str)
     putc(*(str++));
   return 0;
 }
 
+/* 文字列受信 */
+int gets(unsigned char *buf)
+{
+  int i = 0;
+  unsigned char c;
+  do {
+    c = getc();
+    if (c == '\n')
+      c = '\0';
+    buf[i++] = c;
+  } while (c);
+  return i - 1;
+}
+
+/* 数値の16進表示 */
 int putxval(unsigned long value, int column)
 {
   char buf[9];

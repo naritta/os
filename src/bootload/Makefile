@@ -20,7 +20,7 @@ H8WRITE = ../tools/h8write/kz_h8write
 H8WRITE_SERDEV = /dev/cu.usbserial-FTHG8ZEV
 
 OBJS  = vector.o startup.o main.o
-OBJS += lib.o serial.o
+OBJS += lib.o serial.o xmodem.o
 
 TARGET = kzload
 
