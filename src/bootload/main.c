@@ -1,6 +1,7 @@
 #include "defines.h"
 #include "serial.h"
 #include "xmodem.h"
+#include "elf.h"
 #include "lib.h"
 
 static int init(void)
@@ -63,17 +64,27 @@ int main(void)
       loadbuf = (char *)(&buffer_start);
       size = xmodem_recv(loadbuf);
       wait();
+      
       if (size < 0) {
-  puts("\nXMODEM receive error!\n");
-      } else {
-  puts("\nXMODEM receive succeeded.\n");
-      }
-    } else if (!strcmp(buf, "dump")) {
+        puts("\nXMODEM receive error!\n");
+        }
+      else {
+        puts("\nXMODEM receive succeeded.\n");
+        }
+    } 
+
+    else if (!strcmp(buf, "dump")) {
       puts("size: ");
       putxval(size, 0);
       puts("\n");
       dump(loadbuf, size);
-    } else {
+    }
+
+    else if (!strcmp(buf, "run")) {
+      elf_load(loadbuf);
+    }
+
+    else {
       puts("unknown.\n");
     }
   }
