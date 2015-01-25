@@ -6,6 +6,7 @@
 #include "lib.h"
 
 #define THREAD_NUM 6
+#define PRIORITY_NUM 16
 #define THREAD_NAME_SIZE 15
 
 /* スレッド・コンテキスト */
@@ -17,7 +18,10 @@ typedef struct _kz_context {
 typedef struct _kz_thread {
   struct _kz_thread *next;
   char name[THREAD_NAME_SIZE + 1]; /* スレッド名 */
+  int priority;   /* 優先度 */
   char *stack;    /* スタック */
+  uint32 flags;   /* 各種フラグ */
+  #define KZ_THREAD_FLAG_READY (1 << 0)
 
   struct { /* スレッドのスタート・アップ(thread_init())に渡すパラメータ */
     kz_func_t func; /* スレッドのメイン関数 */
@@ -31,14 +35,14 @@ typedef struct _kz_thread {
   } syscall;
 
   kz_context context; /* コンテキスト情報 */
-  char dummy[16]; 
+  char dummy[8]; 
 } kz_thread;
 
 /* スレッドのレディー・キュー */
 static struct {
   kz_thread *head;
   kz_thread *tail;
-} readyque;
+} readyque[PRIORITY_NUM];
 
 static kz_thread *current; /* カレント・スレッド */
 static kz_thread threads[THREAD_NUM]; /* タスク・コントロール・ブロック */
@@ -52,12 +56,17 @@ static int getcurrent(void)
   if (current == NULL) {
     return -1;
   }
+  if (!(current->flags & KZ_THREAD_FLAG_READY)) {
+    /* すでに無い場合は無視 */
+    return 1;
+  }
 
   /* カレント・スレッドは必ず先頭にあるはずなので，先頭から抜き出す */
-  readyque.head = current->next;
-  if (readyque.head == NULL) {
-    readyque.tail = NULL;
+  readyque[current->priority].head = current->next;
+  if (readyque[current->priority].head == NULL) {
+    readyque[current->priority].tail = NULL;
   }
+  current->flags &= ~KZ_THREAD_FLAG_READY;
   current->next = NULL;
 
   return 0;
@@ -69,14 +78,19 @@ static int putcurrent(void)
   if (current == NULL) {
     return -1;
   }
+  if (current->flags & KZ_THREAD_FLAG_READY) {
+    /* すでに有る場合は無視 */
+    return 1;
+  }
 
   /* レディー・キューの末尾に接続する */
-  if (readyque.tail) {
-    readyque.tail->next = current;
+  if (readyque[current->priority].tail) {
+    readyque[current->priority].tail->next = current;
   } else {
-    readyque.head = current;
+    readyque[current->priority].head = current;
   }
-  readyque.tail = current;
+  readyque[current->priority].tail = current;
+  current->flags |= KZ_THREAD_FLAG_READY;
 
   return 0;
 }
@@ -95,7 +109,7 @@ static void thread_init(kz_thread *thp)
 }
 
 /* システム・コールの処理(kz_run():スレッドの起動) */
-static kz_thread_id_t thread_run(kz_func_t func, char *name,
+static kz_thread_id_t thread_run(kz_func_t func, char *name, int priority,
          int stacksize, int argc, char *argv[])
 {
   int i;
@@ -118,6 +132,8 @@ static kz_thread_id_t thread_run(kz_func_t func, char *name,
   /* タスク・コントロール・ブロック(TCB)の設定 */
   strcpy(thp->name, name);
   thp->next     = NULL;
+  thp->priority = priority;
+  thp->flags    = 0;
 
   thp->init.func = func;
   thp->init.argc = argc;
@@ -135,8 +151,9 @@ static kz_thread_id_t thread_run(kz_func_t func, char *name,
 
   /*
    * プログラム・カウンタを設定する．
+   * スレッドの優先度がゼロの場合には，割込み禁止スレッドとする．
    */
-  *(--sp) = (uint32)thread_init;
+  *(--sp) = (uint32)thread_init | ((uint32)(priority ? 0 : 0xc0) << 24);
 
   *(--sp) = 0; /* ER6 */
   *(--sp) = 0; /* ER5 */
@@ -174,6 +191,48 @@ static int thread_exit(void)
   return 0;
 }
 
+/* システム・コールの処理(kz_wait():スレッドの実行権放棄) */
+static int thread_wait(void)
+{
+  putcurrent();
+  return 0;
+}
+
+/* システム・コールの処理(kz_sleep():スレッドのスリープ) */
+static int thread_sleep(void)
+{
+  return 0;
+}
+
+/* システム・コールの処理(kz_wakeup():スレッドのウェイク・アップ) */
+static int thread_wakeup(kz_thread_id_t id)
+{
+  /* ウェイク・アップを呼び出したスレッドをレディー・キューに戻す */
+  putcurrent();
+
+  /* 指定されたスレッドをレディー・キューに接続してウェイク・アップする */
+  current = (kz_thread *)id;
+  putcurrent();
+
+  return 0;
+}
+
+/* システム・コールの処理(kz_getid():スレッドID取得) */
+static kz_thread_id_t thread_getid(void)
+{
+  putcurrent();
+  return (kz_thread_id_t)current;
+}
+
+/* システム・コールの処理(kz_chpri():スレッドの優先度変更) */
+static int thread_chpri(int priority)
+{
+  int old = current->priority;
+  if (priority >= 0)
+    current->priority = priority; /* 優先度変更 */
+  putcurrent(); /* 新しい優先度のレディー・キューに繋ぎ直す */
+  return old;
+}
 
 static void thread_intr(softvec_type_t type, unsigned long sp);
 
@@ -198,12 +257,27 @@ static void call_functions(kz_syscall_type_t type, kz_syscall_param_t *p)
   switch (type) {
   case KZ_SYSCALL_TYPE_RUN: /* kz_run() */
     p->un.run.ret = thread_run(p->un.run.func, p->un.run.name,
-             p->un.run.stacksize,
+             p->un.run.priority, p->un.run.stacksize,
              p->un.run.argc, p->un.run.argv);
     break;
   case KZ_SYSCALL_TYPE_EXIT: /* kz_exit() */
     /* TCBが消去されるので，戻り値を書き込んではいけない */
     thread_exit();
+    break;
+  case KZ_SYSCALL_TYPE_WAIT: /* kz_wait() */
+    p->un.wait.ret = thread_wait();
+    break;
+  case KZ_SYSCALL_TYPE_SLEEP: /* kz_sleep() */
+    p->un.sleep.ret = thread_sleep();
+    break;
+  case KZ_SYSCALL_TYPE_WAKEUP: /* kz_wakeup() */
+    p->un.wakeup.ret = thread_wakeup(p->un.wakeup.id);
+    break;
+  case KZ_SYSCALL_TYPE_GETID: /* kz_getid() */
+    p->un.getid.ret = thread_getid();
+    break;
+  case KZ_SYSCALL_TYPE_CHPRI: /* kz_chpri() */
+    p->un.chpri.ret = thread_chpri(p->un.chpri.priority);
     break;
   default:
     break;
@@ -226,10 +300,20 @@ static void syscall_proc(kz_syscall_type_t type, kz_syscall_param_t *p)
 /* スレッドのスケジューリング */
 static void schedule(void)
 {
-  if (!readyque.head) /* 見つからなかった */
+  int i;
+
+  /*
+   * 優先順位の高い順(優先度の数値の小さい順)にレディー・キューを見て，
+   * 動作可能なスレッドを検索する．
+   */
+  for (i = 0; i < PRIORITY_NUM; i++) {
+    if (readyque[i].head) /* 見つかった */
+      break;
+  }
+  if (i == PRIORITY_NUM) /* 見つからなかった */
     kz_sysdown();
 
-  current = readyque.head; /* カレント・スレッドに設定する */
+  current = readyque[i].head; /* カレント・スレッドに設定する */
 }
 
 static void syscall_intr(void)
@@ -270,7 +354,7 @@ static void thread_intr(softvec_type_t type, unsigned long sp)
   /* ここには返ってこない */
 }
 
-void kz_start(kz_func_t func, char *name, int stacksize,
+void kz_start(kz_func_t func, char *name, int priority, int stacksize,
         int argc, char *argv[])
 {
   /*
@@ -279,7 +363,7 @@ void kz_start(kz_func_t func, char *name, int stacksize,
    */
   current = NULL;
 
-  readyque.head = readyque.tail = NULL;
+  memset(readyque, 0, sizeof(readyque));
   memset(threads,  0, sizeof(threads));
   memset(handlers, 0, sizeof(handlers));
 
@@ -288,7 +372,8 @@ void kz_start(kz_func_t func, char *name, int stacksize,
   setintr(SOFTVEC_TYPE_SOFTERR, softerr_intr); /* ダウン要因発生 */
 
   /* システム・コール発行不可なので直接関数を呼び出してスレッド作成する */
-  current = (kz_thread *)thread_run(func, name, stacksize, argc, argv);
+  current = (kz_thread *)thread_run(func, name, priority, stacksize,
+            argc, argv);
 
   /* 最初のスレッドを起動 */
   dispatch(&current->context);
