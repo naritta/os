@@ -14,7 +14,7 @@ _intr_softerr:
 	mov.l	er0,@-er7
 	mov.l	er7,er1
 	mov.l	#_intrstack,sp
-	mov.l	er1,@-er17
+	mov.l	er1,@-er7
 	mov.w	#SOFTVEC_TYPE_SOFTERR,r0
 	jsr	@_interrupt
 	mov.l	@er7+,er1
