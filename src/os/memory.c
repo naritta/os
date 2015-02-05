@@ -51,9 +51,79 @@ int kzmem_init(void){
 }
 
 void *kzmem_alloc(int size){
-    
+    int i;
+    kzmem_block *mp;
+    kzmem_pool *p;
+
+    for (i=0;i< MEMORY_AREA_NUM;i++){
+        p = &pool;
+        if (size <= p->size - sizeof(kzmem_block)){
+            if (p->free == NULL){
+                kz_sysdown();
+                return NULL;
+            }
+
+            mp = p->free;
+            p->free = p->free->next;
+            mp->next = NULL;
+
+            return mp+1;
+        }
+    }
+
+    kz_sysdown();
+    return NULL;
 }
 
 void kzmem_free(void *mem){
+    int i;
+    kzmem_block *mp;
+    kzmem_pool *p;
 
+    mp = ((kzmem_block *)mem - 1);
+
+    for (i=0;i< MEMORY_AREA_NUM;i++){
+        p=&pool[i];
+
+        if(mp->size == p->size){
+            mp->next = p->free;
+            p->free = mp;
+            return;
+        }
+    }
+
+    kz_sysdown();
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

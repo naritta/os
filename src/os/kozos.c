@@ -3,6 +3,7 @@
 #include "intr.h"
 #include "interrupt.h"
 #include "syscall.h"
+#include "memory.h"
 #include "lib.h"
 
 #define THREAD_NUM 6
@@ -234,6 +235,17 @@ static int thread_chpri(int priority)
   return old;
 }
 
+static void *thread_kmalloc(int size){
+    putcurrent();
+    return kzmem_alloc(size);
+}
+
+static int thread_kmfree(char *p){
+    kzmem_free(p);
+    putcurrent();
+    return 0;
+}
+
 static void thread_intr(softvec_type_t type, unsigned long sp);
 
 /* 割込みハンドラの登録 */
@@ -279,6 +291,13 @@ static void call_functions(kz_syscall_type_t type, kz_syscall_param_t *p)
   case KZ_SYSCALL_TYPE_CHPRI: /* kz_chpri() */
     p->un.chpri.ret = thread_chpri(p->un.chpri.priority);
     break;
+  case KZ_SYSCALL_TYPE_KMALLOC:
+    p->un.kmalloc.ret = thread_kmalloc(p->un.kmalloc.size);
+    break;
+  case KZ_SYSCALL_TYPE_KMFREE:
+    p->un.kmfree.ret = thread_kmfree(p->un.kmfree.p);
+    break;
+
   default:
     break;
   }
@@ -357,6 +376,7 @@ static void thread_intr(softvec_type_t type, unsigned long sp)
 void kz_start(kz_func_t func, char *name, int priority, int stacksize,
         int argc, char *argv[])
 {
+    kzmem_init();
   /*
    * 以降で呼び出すスレッド関連のライブラリ関数の内部で current を
    * 見ている場合があるので，current を NULL に初期化しておく．
