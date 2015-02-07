@@ -56,7 +56,7 @@ void *kzmem_alloc(int size){
     kzmem_pool *p;
 
     for (i=0;i< MEMORY_AREA_NUM;i++){
-        p = &pool;
+        p = &pool[i];
         if (size <= p->size - sizeof(kzmem_block)){
             if (p->free == NULL){
                 kz_sysdown();
